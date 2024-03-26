@@ -5,22 +5,20 @@ using Game.Tools;
 using Unity.Collections;
 using Unity.Entities;
 
-namespace Wayz.CS2.AbandonedBuildingRemover;
-public class AbandonedBuildingRemoverSystem : GameSystemBase
+namespace AbandonedBuildingRemover;
+public partial class AbandonedBuildingRemoverSystem : GameSystemBase
 {
-    private EntityCommandBuffer _commandBuffer;
-
     private EntityQuery _abandonedBuildingQuery;
 
     protected override void OnCreate()
     {
         base.OnCreate();
-        _commandBuffer = base.World.GetOrCreateSystemManaged<EndFrameBarrier>().CreateCommandBuffer();
         _abandonedBuildingQuery = GetEntityQuery(new EntityQueryDesc()
         {
             All =
             [
-                ComponentType.ReadWrite<Abandoned>()
+                ComponentType.ReadWrite<Abandoned>(),
+                ComponentType.ReadWrite<Building>()
             ],
             None =
             [
@@ -34,11 +32,10 @@ public class AbandonedBuildingRemoverSystem : GameSystemBase
 
     protected override void OnUpdate()
     {
-
         var abandonedBuildings = _abandonedBuildingQuery.ToEntityArray(Allocator.Temp);
         foreach (var entity in abandonedBuildings)
         {
-            _commandBuffer.AddComponent<Deleted>(entity);
+            EntityManager.AddComponent<Deleted>(entity);
         }
     }
 }
