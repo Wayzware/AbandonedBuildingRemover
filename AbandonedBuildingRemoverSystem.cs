@@ -7,6 +7,7 @@ using Game.Net;
 using Game.Tools;
 using Unity.Collections;
 using Unity.Entities;
+
 #if USE_BURST
 using Unity.Jobs;
 using Unity.Burst;
@@ -50,12 +51,14 @@ namespace AbandonedBuildingRemover
 
         protected override void OnUpdate()
         {
-            Mod.Log.Info("Run OnUpdate");
 #if USE_BURST
             AbandonedBuildingRemoverJob job = default;
-            job.EntityTypeHandle = SystemAPI.GetEntityTypeHandle();
-            job.EntityCommandBuffer = _endFrameBarrier.CreateCommandBuffer();
-            job.AbandonedBuildingsChunk = _abandonedBuildingQuery.ToArchetypeChunkListAsync(World.UpdateAllocator.ToAllocator, out _);
+            job.m_entityTypeHandle = SystemAPI.GetEntityTypeHandle();
+            job.m_entityCommandBuffer = _endFrameBarrier.CreateCommandBuffer();
+            job.m_abandonedBuildingsChunk = _abandonedBuildingQuery.ToArchetypeChunkListAsync(World.UpdateAllocator.ToAllocator, out _);
+            job.m_subLaneLookup = GetBufferLookup<SubLane>(false);
+            job.m_subNetLookup = GetBufferLookup<SubNet>(false);
+            job.m_subAreaLookup = GetBufferLookup<SubArea>(false);
             JobHandle handle = job.Schedule(Dependency);
             _endFrameBarrier.AddJobHandleForProducer(handle);
             Dependency = handle;
@@ -110,6 +113,9 @@ namespace AbandonedBuildingRemover
             public EntityCommandBuffer m_entityCommandBuffer;
             public NativeList<ArchetypeChunk> m_abandonedBuildingsChunk;
             public EntityTypeHandle m_entityTypeHandle;
+            public BufferLookup<SubArea> m_subAreaLookup;
+            public BufferLookup<SubNet> m_subNetLookup;
+            public BufferLookup<SubLane> m_subLaneLookup;
 
             public void Execute()
             {
@@ -119,6 +125,31 @@ namespace AbandonedBuildingRemover
                     var nativeArray = chunk.GetNativeArray(m_entityTypeHandle);
                     for (int j = 0; j < nativeArray.Length; j++)
                     {
+                        var entity = nativeArray[j];
+                        if (m_subAreaLookup.TryGetBuffer(entity, out var subAreas))
+                        {
+                            foreach (var entry in subAreas)
+                            {
+                                m_entityCommandBuffer.AddComponent<Deleted>(entry.m_Area);
+                            }
+                        }
+
+                        if (m_subLaneLookup.TryGetBuffer(entity, out var subLanes))
+                        {
+                            foreach (var entry in subLanes)
+                            {
+                                m_entityCommandBuffer.AddComponent<Deleted>(entry.m_SubLane);
+                            }
+                        }
+
+                        if(m_subNetLookup.TryGetBuffer(entity, out var subNet))
+                        {
+                            foreach (var entry in subNet)
+                            {
+                                m_entityCommandBuffer.AddComponent<Deleted>(entry.m_SubNet);
+                            }
+                        }
+
                         m_entityCommandBuffer.AddComponent<Deleted>(nativeArray[j]);
                     }
                 }
