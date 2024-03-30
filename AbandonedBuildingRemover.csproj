@@ -5,7 +5,7 @@
     <Configurations>Debug;Release</Configurations>
     <LangVersion>9</LangVersion>
 
-    <BurstCompile>false</BurstCompile>
+    <BurstCompile>true</BurstCompile>
 
     <!--The folder where Game.dll is located. Set it only if the game is not installed in the default location, otherwise keep it empty-->
     <CustomManagedPath></CustomManagedPath>
