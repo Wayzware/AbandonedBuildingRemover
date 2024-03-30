@@ -3,25 +3,26 @@ using Game;
 using Game.Modding;
 using Game.SceneFlow;
 
-namespace AbandonedBuildingRemover;
-
-public class Mod : IMod
+namespace AbandonedBuildingRemover
 {
-    public static ILog Log = LogManager.GetLogger($"{nameof(AbandonedBuildingRemover)}.{nameof(Mod)}").SetShowsErrorsInUI(false);
-
-    public void OnLoad(UpdateSystem updateSystem)
+    public class Mod : IMod
     {
-        Log.Info(nameof(OnLoad));
+        public static ILog Log = LogManager.GetLogger($"{nameof(AbandonedBuildingRemover)}.{nameof(Mod)}").SetShowsErrorsInUI(false);
 
-        if (GameManager.instance.modManager.TryGetExecutableAsset(this, out var asset))
-            Log.Info($"Current mod asset at {asset.path}");
+        public void OnLoad(UpdateSystem updateSystem)
+        {
+            Log.Info(nameof(OnLoad));
 
-        updateSystem.UpdateAfter<AbandonedBuildingRemoverSystem>(SystemUpdatePhase.Deserialize);
-        updateSystem.UpdateAfter<AbandonedBuildingRemoverSystem>(SystemUpdatePhase.GameSimulation);
-    }
+            if (GameManager.instance.modManager.TryGetExecutableAsset(this, out var asset))
+                Log.Info($"Current mod asset at {asset.path}");
 
-    public void OnDispose()
-    {
-        Log.Info(nameof(OnDispose));
+            //updateSystem.UpdateAfter<AbandonedBuildingRemoverSystem>(SystemUpdatePhase.Deserialize);
+            updateSystem.UpdateAfter<AbandonedBuildingRemoverSystem>(SystemUpdatePhase.GameSimulation);
+        }
+
+        public void OnDispose()
+        {
+            Log.Info(nameof(OnDispose));
+        }
     }
 }
