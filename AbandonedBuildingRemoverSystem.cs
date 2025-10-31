@@ -1,50 +1,32 @@
-﻿using Colossal.Entities;
+using Colossal.Entities;
 using Game;
-using Game.Areas;
 using Game.Buildings;
 using Game.Common;
+using Game.Areas;
 using Game.Net;
-using Game.Tools;
+using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
-
-#if USE_BURST
 using Unity.Jobs;
-using Unity.Burst;
-#endif
 
 namespace AbandonedBuildingRemover
 {
     public partial class AbandonedBuildingRemoverSystem : GameSystemBase
     {
         private EntityQuery _abandonedBuildingQuery;
-#if USE_BURST
         private EndFrameBarrier _endFrameBarrier;
-#endif
 
         protected override void OnCreate()
         {
             base.OnCreate();
-            _abandonedBuildingQuery = GetEntityQuery(new EntityQueryDesc()
+
+            _abandonedBuildingQuery = GetEntityQuery(new EntityQueryDesc
             {
-                All = new ComponentType[]
-                {
-                    ComponentType.ReadOnly<Abandoned>(),
-                    ComponentType.ReadOnly<Building>()
-                },
-                None = new ComponentType[]
-                {
-                    ComponentType.ReadOnly<Deleted>(),
-                    ComponentType.ReadOnly<Temp>()
-                }
+                All  = new[] { ComponentType.ReadOnly<Abandoned>() },
+                None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>() }
             });
 
-#if USE_BURST
-            _endFrameBarrier = base.World.GetOrCreateSystemManaged<EndFrameBarrier>();
-            Mod.Log.Info("Using Burst");
-#else
-            Mod.Log.Info("NOT using Burst");
-#endif
+            _endFrameBarrier = World.GetOrCreateSystemManaged<EndFrameBarrier>();
 
             RequireForUpdate(_abandonedBuildingQuery);
         }
@@ -52,105 +34,93 @@ namespace AbandonedBuildingRemover
         protected override void OnUpdate()
         {
 #if USE_BURST
-            AbandonedBuildingRemoverJob job = default;
-            job.m_entityTypeHandle = SystemAPI.GetEntityTypeHandle();
-            job.m_entityCommandBuffer = _endFrameBarrier.CreateCommandBuffer();
-            job.m_abandonedBuildingsChunk = _abandonedBuildingQuery.ToArchetypeChunkListAsync(World.UpdateAllocator.ToAllocator, out _);
-            job.m_subLaneLookup = GetBufferLookup<SubLane>(false);
-            job.m_subNetLookup = GetBufferLookup<SubNet>(false);
-            job.m_subAreaLookup = GetBufferLookup<SubArea>(false);
-            JobHandle handle = job.Schedule(Dependency);
+            var job = new AbandonedBuildingRemoverJob
+            {
+                m_entityTypeHandle    = SystemAPI.GetEntityTypeHandle(),
+                m_entityCommandBuffer = _endFrameBarrier.CreateCommandBuffer(),
+                m_abandonedChunks     = _abandonedBuildingQuery.ToArchetypeChunkListAsync(World.UpdateAllocator.ToAllocator, out var deps),
+                m_subAreaLookup       = GetBufferLookup<SubArea>(true),
+                m_subNetLookup        = GetBufferLookup<SubNet>(true),
+                m_subLaneLookup       = GetBufferLookup<SubLane>(true)
+            };
+
+            var handle = job.Schedule(JobHandle.CombineDependencies(Dependency, deps));
             _endFrameBarrier.AddJobHandleForProducer(handle);
             Dependency = handle;
-#endif
-
-#if !USE_BURST
-            var abandonedBuildings = _abandonedBuildingQuery.ToEntityArray(Allocator.Temp);
-            foreach (var entity in abandonedBuildings)
+#else
+            var abandoned = _abandonedBuildingQuery.ToEntityArray(Allocator.Temp);
+            try
             {
-                //Mod.Log.Info("START");
-
-                if (EntityManager.TryGetBuffer<SubArea>(entity, false, out var subareas))
+                foreach (var entity in abandoned)
                 {
-                    //Mod.Log.Info($"SubAreas: {subareas.Length}");
-                    foreach (var subArea in subareas)
+                    // Delete child areas
+                    if (EntityManager.TryGetBuffer<SubArea>(entity, out var subAreas))
                     {
-                        EntityManager.AddComponent<Deleted>(subArea.m_Area);
+                        foreach (var entry in subAreas)
+                            EntityManager.AddComponent<Deleted>(entry.m_Area);
                     }
-                }
 
-                if (EntityManager.TryGetBuffer<SubNet>(entity, false, out var subnets))
-                {
-                    //Mod.Log.Info($"SubNets: {subnets.Length}");
-                    foreach (var net in subnets)
+                    // Delete child nets
+                    if (EntityManager.TryGetBuffer<SubNet>(entity, out var subNets))
                     {
-                        EntityManager.AddComponent<Deleted>(net.m_SubNet);
+                        foreach (var entry in subNets)
+                            EntityManager.AddComponent<Deleted>(entry.m_SubNet);
                     }
-                }
 
-                if (EntityManager.TryGetBuffer<SubLane>(entity, false, out var sublanes))
-                {
-                    //Mod.Log.Info($"SubLanes: {sublanes.Length}");
-                    foreach (var lane in sublanes)
+                    // Delete child lanes
+                    if (EntityManager.TryGetBuffer<SubLane>(entity, out var subLanes))
                     {
-                        EntityManager.AddComponent<Deleted>(lane.m_SubLane);
+                        foreach (var entry in subLanes)
+                            EntityManager.AddComponent<Deleted>(entry.m_SubLane);
                     }
+
+                    // Finally delete the building entity itself
+                    EntityManager.AddComponent<Deleted>(entity);
                 }
-
-                EntityManager.AddComponent<Deleted>(entity);
-
-                //Mod.Log.Info("END");
+            }
+            finally
+            {
+                if (abandoned.IsCreated) abandoned.Dispose(); // <-- fix leak
             }
 #endif
         }
 
-        public override int GetUpdateInterval(SystemUpdatePhase phase) => phase == SystemUpdatePhase.GameSimulation ? 16 : 1;
+        public override int GetUpdateInterval(SystemUpdatePhase phase)
+            => phase == SystemUpdatePhase.GameSimulation ? 16 : 1;
 
 #if USE_BURST
         [BurstCompile]
         private struct AbandonedBuildingRemoverJob : IJob
         {
             public EntityCommandBuffer m_entityCommandBuffer;
-            public NativeList<ArchetypeChunk> m_abandonedBuildingsChunk;
-            public EntityTypeHandle m_entityTypeHandle;
-            public BufferLookup<SubArea> m_subAreaLookup;
-            public BufferLookup<SubNet> m_subNetLookup;
-            public BufferLookup<SubLane> m_subLaneLookup;
+            public NativeList<ArchetypeChunk> m_abandonedChunks;
+
+            [ReadOnly] public EntityTypeHandle m_entityTypeHandle;
+            [ReadOnly] public BufferLookup<SubArea> m_subAreaLookup;
+            [ReadOnly] public BufferLookup<SubNet>  m_subNetLookup;
+            [ReadOnly] public BufferLookup<SubLane> m_subLaneLookup;
 
             public void Execute()
             {
-                for (int i = 0; i < m_abandonedBuildingsChunk.Length; i++)
+                for (int i = 0; i < m_abandonedChunks.Length; i++)
                 {
-                    var chunk = m_abandonedBuildingsChunk[i];
-                    var nativeArray = chunk.GetNativeArray(m_entityTypeHandle);
-                    for (int j = 0; j < nativeArray.Length; j++)
+                    var chunk = m_abandonedChunks[i];
+                    var entities = chunk.GetNativeArray(m_entityTypeHandle);
+
+                    for (int j = 0; j < entities.Length; j++)
                     {
-                        var entity = nativeArray[j];
+                        var entity = entities[j];
+
                         if (m_subAreaLookup.TryGetBuffer(entity, out var subAreas))
-                        {
-                            foreach (var entry in subAreas)
-                            {
-                                m_entityCommandBuffer.AddComponent<Deleted>(entry.m_Area);
-                            }
-                        }
+                            foreach (var e in subAreas) m_entityCommandBuffer.AddComponent<Deleted>(e.m_Area);
 
                         if (m_subLaneLookup.TryGetBuffer(entity, out var subLanes))
-                        {
-                            foreach (var entry in subLanes)
-                            {
-                                m_entityCommandBuffer.AddComponent<Deleted>(entry.m_SubLane);
-                            }
-                        }
+                            foreach (var e in subLanes) m_entityCommandBuffer.AddComponent<Deleted>(e.m_SubLane);
 
-                        if(m_subNetLookup.TryGetBuffer(entity, out var subNet))
-                        {
-                            foreach (var entry in subNet)
-                            {
-                                m_entityCommandBuffer.AddComponent<Deleted>(entry.m_SubNet);
-                            }
-                        }
+                        if (m_subNetLookup.TryGetBuffer(entity, out var subNets))
+                            foreach (var e in subNets) m_entityCommandBuffer.AddComponent<Deleted>(e.m_SubNet);
 
-                        m_entityCommandBuffer.AddComponent<Deleted>(nativeArray[j]);
+                        m_entityCommandBuffer.AddComponent<Deleted>(entity);
                     }
                 }
             }
